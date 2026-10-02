@@ -1,0 +1,35 @@
+{
+  "name": "@files-system/database",
+  "version": "0.0.0",
+  "private": true,
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "generate": "prisma generate",
+    "migrate:dev": "prisma migrate dev",
+    "migrate:deploy": "prisma migrate deploy",
+    "seed": "prisma db seed",
+    "studio": "prisma studio",
+    "build": "prisma generate && tsc",
+    "db-push": "prisma db push",
+    "db-reset": "tsx --env-file=../.env prisma/reset.ts",
+    "db-seed": "npm run seed-roles && npm run seed-users && npm run seed-documents",
+    "db-refresh": "npm run db-reset && npm run db-seed",
+    "seed-roles": "tsx --env-file=../.env prisma/seeders/seedRoles.ts",
+    "seed-users": "tsx --env-file=../.env prisma/seeders/seedUsers.ts",
+    "seed-documents": "tsx --env-file=../.env prisma/seeders/seedDocuments.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "@types/pg": "^8.23.1",
+    "prisma": "^7.10.0",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2"
+  },
+  "dependencies": {
+    "@prisma/adapter-pg": "^7.10.0",
+    "@prisma/client": "^7.10.0",
+    "dotenv": "^18.0.5",
+    "pg": "^8.23.1"
+  }
+}
