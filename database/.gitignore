@@ -1,0 +1,12 @@
+# node
+node_modules
+dist
+
+# generated Prisma client (manually generated with npx prisma generate)
+/generated/prisma
+
+# ai agents (?) (idk)
+.agents
+.claude
+.windsurf
+skills-lock.json
