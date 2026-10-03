@@ -15,7 +15,6 @@ export class UsersService {
           email: dto.email,
           firstName: dto.firstName,
           lastName: dto.lastName,
-          roleId: dto.roleId,
           passwordHash: await bcrypt.hash(dto.password, 10),
           status: "ACTIVE", // use the same value your seeders use
         },
@@ -35,8 +34,7 @@ export class UsersService {
   async findOne(id: number) {
     const user = await this.prisma.user.findUnique({
       where: { userId: id },
-      omit: { passwordHash: true },
-      include: { role: true },
+      omit: { passwordHash: true }
     });
     if (!user) throw new NotFoundException(`User ${id} not found`);
     return user;

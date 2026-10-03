@@ -59,8 +59,6 @@ npm run build -w database
 - `migrate:deploy` deploys the database tables according to the migration history.`.
 - `build` generates the Prisma client and compiles the `database` package. The backend needs this before it can start.
 
-Re-run the `db-push` and `build` commands any time `schema.prisma` changes.
-
 ### 6. Run the backend
 
 From the repository root:

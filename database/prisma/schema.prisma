@@ -122,7 +122,7 @@ model Scanner {
   status          String
   lastConnectedAt DateTime?
 
-  organization organization @relation(fields:[organizationId], references: [organizationId])
+  organization Organization? @relation(fields:[organizationId], references: [organizationId])
 
   scanSession  ScanSession[]
   activityLogs ActivityLog[]
@@ -192,13 +192,14 @@ model Document {
   status    String
   ocrStatus String
 
-  organization Organization @relation(fields:[organizationId], references:[organizationId])
+  organization Organization? @relation(fields:[organizationId], references:[organizationId])
   createdByUser User         @relation("DocumentCreatedBy", fields: [createdBy], references: [userId])
   updatedByUser User         @relation("DocumentUpdatedBy", fields: [lastUpdatedBy], references: [userId])
   documentType  DocumentType @relation(fields: [docTypeId], references: [docTypeId])
 
   pages           DocumentPage[]
   ocrResults      OCRResult[]
+  organizationShares DocumentShare[]
   documentAccess  DocumentAccess[]
   activityLogs    ActivityLog[]
   qrCodes         QRCode[]
@@ -323,6 +324,7 @@ model DocumentMetadata {
 model Category {
   categoryId    Int       @id @default(autoincrement())
   categoryName  String    @unique
+  organizationId Int
   description   String?
   createdBy     Int
   lastUpdatedBy Int?
@@ -331,6 +333,7 @@ model Category {
 
   createdByUser User  @relation("CategoryCreatedBy", fields: [createdBy], references: [userId])
   updatedByUser User? @relation("CategoryUpdatedBy", fields: [lastUpdatedBy], references: [userId])
+  organization  Organization @relation(fields:[organizationId], references: [organizationId])
 
   documents DocumentCategory[]
 }
@@ -350,12 +353,14 @@ model DocumentCategory {
 model Tag {
   tagId         Int       @id @default(autoincrement())
   tagName       String    @unique
+  organizationId Int
   description   String?
   createdBy     Int
   lastUpdatedBy Int?
   createdAt     DateTime  @default(now())
   lastUpdatedAt DateTime?
 
+  organization Organization @relation(fields:[organizationId], references: [organizationId])
   createdByUser User  @relation("TagCreatedBy", fields: [createdBy], references: [userId])
   updatedByUser User? @relation("TagUpdatedBy", fields: [lastUpdatedBy], references: [userId])
 
