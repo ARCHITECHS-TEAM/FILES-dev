@@ -20,17 +20,17 @@ datasource db {
 model User {
   userId       Int      @id @default(autoincrement())
   email        String   @unique
-  roleId       Int
   firstName    String
   lastName     String
   passwordHash String
   createdAt    DateTime @default(now())
   status       String
 
-  role              Role             @relation(fields: [roleId], references: [roleId])
   documentAccess    DocumentAccess[]
+  orgMemberships    OrganizationMember[]
   scanSessions      ScanSession[]
   activityLogs      ActivityLog[]
+  documentsShared   DocumentShare[]
   categoriesCreated Category[]       @relation("CategoryCreatedBy")
   categoriesUpdated Category[]       @relation("CategoryUpdatedBy")
   tagsCreated       Tag[]            @relation("TagCreatedBy")
@@ -44,7 +44,7 @@ model Role {
   roleName    String  @unique
   description String?
 
-  users       User[]
+  orgMember   OrganizationMember[]
   permissions RolePermission[]
 }
 
@@ -66,6 +66,50 @@ model RolePermission {
   @@id([roleId, permissionId])
 }
 
+// Organizations
+
+model Organization {
+  organizationId Int      @id @default(autoincrement())
+  name           String   @unique
+  createdAt      DateTime @default(now())
+  status         String
+
+  members        OrganizationMember[]
+  documents      Document[]           // owned documents
+  sharedDocs     DocumentShare[]      // documents shared into this org
+  documentTypes  DocumentType[]
+  categories     Category[]
+  tags           Tag[]
+  scanners       Scanner[]
+}
+
+model OrganizationMember {
+  userId         Int
+  organizationId Int
+  roleId         Int
+  joinedAt       DateTime @default(now())
+  status         String
+
+  user         User         @relation(fields: [userId], references: [userId])
+  organization Organization @relation(fields: [organizationId], references: [organizationId])
+  role         Role         @relation(fields: [roleId], references: [roleId])
+
+  @@id([userId, organizationId])
+}
+
+model DocumentShare {
+  documentId     Int
+  organizationId Int
+  sharedBy       Int
+  accessType     String   // e.g. VIEW, EDIT
+  sharedAt       DateTime @default(now())
+
+  document     Document     @relation(fields: [documentId], references: [documentId])
+  organization Organization @relation(fields: [organizationId], references: [organizationId])
+  sharedByUser User         @relation(fields: [sharedBy], references: [userId])
+
+  @@id([documentId, organizationId])
+}
 // Scanner and Scan models
 
 model Scanner {
@@ -73,9 +117,12 @@ model Scanner {
   scannerName     String
   scannerSerial   String    @unique
   scannerModel    String
+  organizationId  Int?
   location        String
   status          String
   lastConnectedAt DateTime?
+
+  organization organization @relation(fields:[organizationId], references: [organizationId])
 
   scanSession  ScanSession[]
   activityLogs ActivityLog[]
@@ -128,6 +175,7 @@ model Document {
   title      String
   fileName   String
   storageUrl String
+  organizationId Int?
 
   docTypeId Int
 
@@ -144,6 +192,7 @@ model Document {
   status    String
   ocrStatus String
 
+  organization Organization @relation(fields:[organizationId], references:[organizationId])
   createdByUser User         @relation("DocumentCreatedBy", fields: [createdBy], references: [userId])
   updatedByUser User         @relation("DocumentUpdatedBy", fields: [lastUpdatedBy], references: [userId])
   documentType  DocumentType @relation(fields: [docTypeId], references: [docTypeId])
@@ -230,6 +279,7 @@ model FileConversion {
 model DocumentType {
   docTypeId       Int      @id @default(autoincrement())
   docTypeName     String   @unique
+  organizationId  Int
   description     String?
   createdAt       DateTime @default(now())
   namingRule      String
@@ -237,6 +287,8 @@ model DocumentType {
 
   documents      Document[]
   metadataFields MetadataField[]
+
+  organization Organization @relation(fields:[organizationId], references:[organizationId])
 }
 
 // Metadata
