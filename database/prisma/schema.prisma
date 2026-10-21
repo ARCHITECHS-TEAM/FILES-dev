@@ -15,7 +15,12 @@ datasource db {
   provider = "postgresql"
 }
 
-// User and Role models
+// ---------------------------------------------------------------------------
+// Users, Roles, Permissions
+//
+// NOTE: Better Auth tables (Session, Account, Verification) are not added yet.
+// passwordHash stays until Better Auth is configured.
+// ---------------------------------------------------------------------------
 
 model User {
   userId       Int      @id @default(autoincrement())
@@ -28,6 +33,8 @@ model User {
 
   documentAccess    DocumentAccess[]
   orgMemberships    OrganizationMember[]
+  officeMemberships OfficeMember[]
+  invitationsSent   Invitation[]
   scanSessions      ScanSession[]
   activityLogs      ActivityLog[]
   documentsShared   DocumentShare[]
@@ -39,13 +46,19 @@ model User {
   documentsUpdated  Document[]       @relation("DocumentUpdatedBy")
 }
 
+// Roles are global definitions (e.g. Organization Administrator, Records Staff, Viewer).
+// They are applied at the organization level (OrganizationMember)
+// and at the office level (OfficeMember).
 model Role {
   roleId      Int     @id @default(autoincrement())
   roleName    String  @unique
   description String?
 
-  orgMember   OrganizationMember[]
-  permissions RolePermission[]
+  orgMembers        OrganizationMember[]
+  officeMembers     OfficeMember[]
+  invitationsOrg    Invitation[]         @relation("InvitationOrgRole")
+  invitationsOffice Invitation[]         @relation("InvitationOfficeRole")
+  permissions       RolePermission[]
 }
 
 model Permission {
@@ -53,9 +66,11 @@ model Permission {
   permissionName String  @unique
   description    String?
 
-  roles RolePermission[]
+  roles        RolePermission[]
+  memberGrants OfficeMemberPermission[]
 }
 
+// Default permissions of a role
 model RolePermission {
   roleId       Int
   permissionId Int
@@ -66,7 +81,9 @@ model RolePermission {
   @@id([roleId, permissionId])
 }
 
-// Organizations
+// ---------------------------------------------------------------------------
+// Organizations and Offices
+// ---------------------------------------------------------------------------
 
 model Organization {
   organizationId Int      @id @default(autoincrement())
@@ -75,14 +92,20 @@ model Organization {
   status         String
 
   members        OrganizationMember[]
+  offices        Office[]
+  invitations    Invitation[]
   documents      Document[]           // owned documents
   sharedDocs     DocumentShare[]      // documents shared into this org
   documentTypes  DocumentType[]
   categories     Category[]
   tags           Tag[]
   scanners       Scanner[]
+  scanSessions   ScanSession[]
+  activityLogs   ActivityLog[]
 }
 
+// Organization-level membership and role (e.g. Organization Administrator).
+// Access to records is granted through OfficeMember.
 model OrganizationMember {
   userId         Int
   organizationId Int
@@ -95,6 +118,89 @@ model OrganizationMember {
   role         Role         @relation(fields: [roleId], references: [roleId])
 
   @@id([userId, organizationId])
+  @@index([organizationId])
+}
+
+// Offices organize records within an organization.
+// Templates, categories, tags and other configurables live at the organization level.
+model Office {
+  officeId       Int      @id @default(autoincrement())
+  organizationId Int
+  name           String
+  description    String?
+  status         String
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [organizationId])
+
+  members         OfficeMember[]
+  invitations     Invitation[]
+  documents       Document[]
+  scanSessions    ScanSession[]
+  scannerOffices  ScannerOffice[]
+  activityLogs    ActivityLog[]
+
+  @@unique([organizationId, name])
+  @@index([organizationId])
+}
+
+// Office-level membership and role (e.g. Records Staff, Viewer).
+// The same user can hold a different role in each office.
+// The application must verify the user is a member of the office's organization.
+model OfficeMember {
+  userId   Int
+  officeId Int
+  roleId   Int
+  joinedAt DateTime @default(now())
+  status   String
+
+  user   User   @relation(fields: [userId], references: [userId])
+  office Office @relation(fields: [officeId], references: [officeId])
+  role   Role   @relation(fields: [roleId], references: [roleId])
+
+  grants OfficeMemberPermission[]
+
+  @@id([userId, officeId])
+  @@index([officeId])
+}
+
+// Per-member grants on top of the role defaults
+// (e.g. download, edit, print QR label, delete).
+model OfficeMemberPermission {
+  userId       Int
+  officeId     Int
+  permissionId Int
+  grantedAt    DateTime @default(now())
+
+  member     OfficeMember @relation(fields: [userId, officeId], references: [userId, officeId])
+  permission Permission   @relation(fields: [permissionId], references: [permissionId])
+
+  @@id([userId, officeId, permissionId])
+}
+
+// Invitation to join an organization, optionally with an office assignment.
+model Invitation {
+  invitationId   Int       @id @default(autoincrement())
+  organizationId Int
+  email          String
+  orgRoleId      Int
+  officeId       Int?
+  officeRoleId   Int?
+  tokenHash      String    @unique
+  status         String    // e.g. PENDING, ACCEPTED, EXPIRED, REVOKED
+  invitedBy      Int
+  createdAt      DateTime  @default(now())
+  expiresAt      DateTime
+  acceptedAt     DateTime?
+
+  organization Organization @relation(fields: [organizationId], references: [organizationId])
+  orgRole      Role         @relation("InvitationOrgRole", fields: [orgRoleId], references: [roleId])
+  office       Office?      @relation(fields: [officeId], references: [officeId])
+  officeRole   Role?        @relation("InvitationOfficeRole", fields: [officeRoleId], references: [roleId])
+  invitedByUser User        @relation(fields: [invitedBy], references: [userId])
+
+  @@index([organizationId])
+  @@index([email])
 }
 
 model DocumentShare {
@@ -110,7 +216,10 @@ model DocumentShare {
 
   @@id([documentId, organizationId])
 }
+
+// ---------------------------------------------------------------------------
 // Scanner and Scan models
+// ---------------------------------------------------------------------------
 
 model Scanner {
   scannerId       Int       @id @default(autoincrement())
@@ -120,33 +229,74 @@ model Scanner {
   organizationId  Int?
   location        String
   status          String
+  credentialHash  String?   // hashed device credential used for submissions
   lastConnectedAt DateTime?
 
   organization Organization? @relation(fields:[organizationId], references: [organizationId])
 
   scanSession  ScanSession[]
   activityLogs ActivityLog[]
+  offices      ScannerOffice[]
+  pairingCodes ScannerPairingCode[]
 }
 
+// Offices a scanner is permitted to send documents to
+model ScannerOffice {
+  scannerId Int
+  officeId  Int
+
+  scanner Scanner @relation(fields: [scannerId], references: [scannerId])
+  office  Office  @relation(fields: [officeId], references: [officeId])
+
+  @@id([scannerId, officeId])
+}
+
+// Temporary pairing codes (distinct from document QR codes)
+model ScannerPairingCode {
+  pairingCodeId Int       @id @default(autoincrement())
+  scannerId     Int
+  codeHash      String    @unique
+  createdAt     DateTime  @default(now())
+  expiresAt     DateTime
+  usedAt        DateTime?
+
+  scanner Scanner @relation(fields: [scannerId], references: [scannerId])
+
+  @@index([scannerId])
+}
+
+// A scanning session is bound to a user, organization, office, and scanner.
+// The application must verify the office belongs to the organization,
+// and the scanner is permitted to send to that office.
 model ScanSession {
   sessionId Int @id @default(autoincrement())
 
-  scannerId Int
-  userId    Int
+  scannerId      Int
+  userId         Int
+  organizationId Int
+  officeId       Int
+  docTypeId      Int?
 
   startedAt   DateTime  @default(now())
+  expiresAt   DateTime
   completedAt DateTime?
+  endedAt     DateTime?
 
   status       String
   errorMessage String?
   retryCount   Int     @default(0)
 
-  scanner Scanner        @relation(fields: [scannerId], references: [scannerId])
-  user    User           @relation(fields: [userId], references: [userId])
-  pages   DocumentPage[]
+  scanner      Scanner        @relation(fields: [scannerId], references: [scannerId])
+  user         User           @relation(fields: [userId], references: [userId])
+  organization Organization   @relation(fields: [organizationId], references: [organizationId])
+  office       Office         @relation(fields: [officeId], references: [officeId])
+  documentType DocumentType?  @relation(fields: [docTypeId], references: [docTypeId])
+  pages        DocumentPage[]
 
   @@index([scannerId])
   @@index([userId])
+  @@index([organizationId])
+  @@index([officeId])
 }
 
 model OCRResult {
@@ -168,45 +318,53 @@ model OCRResult {
   @@index([documentId])
 }
 
+// ---------------------------------------------------------------------------
 // Documents
+// ---------------------------------------------------------------------------
 
 model Document {
-  documentId Int    @id @default(autoincrement())
-  title      String
-  fileName   String
-  storageUrl String
-  organizationId Int?
+  documentId     Int    @id @default(autoincrement())
+  title          String
+  organizationId Int
+  officeId       Int
+
+  // Nullable because a scanned draft has no finalized file until registration
+  fileName   String?
+  storageUrl String?
+  fileType   String?
+  mimeType   String?
+  fileSize   Int?
 
   docTypeId Int
-
-  fileType  String
-  mimeType  String
-  fileSize  Int
-  pageCount Int    @default(1)
+  pageCount Int @default(1)
 
   createdBy     Int
   lastUpdatedBy Int
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
-  status    String
+  status    String   // e.g. DRAFT, REGISTERED, ARCHIVED
   ocrStatus String
 
-  organization Organization? @relation(fields:[organizationId], references:[organizationId])
+  organization  Organization @relation(fields:[organizationId], references:[organizationId])
+  office        Office       @relation(fields:[officeId], references:[officeId])
   createdByUser User         @relation("DocumentCreatedBy", fields: [createdBy], references: [userId])
   updatedByUser User         @relation("DocumentUpdatedBy", fields: [lastUpdatedBy], references: [userId])
   documentType  DocumentType @relation(fields: [docTypeId], references: [docTypeId])
 
-  pages           DocumentPage[]
-  ocrResults      OCRResult[]
+  pages              DocumentPage[]
+  ocrResults         OCRResult[]
   organizationShares DocumentShare[]
-  documentAccess  DocumentAccess[]
-  activityLogs    ActivityLog[]
-  qrCodes         QRCode[]
-  fileConversions FileConversion[]
-  metadata        DocumentMetadata[]
-  categories      DocumentCategory[]
-  tags            DocumentTag[]
+  documentAccess     DocumentAccess[]
+  activityLogs       ActivityLog[]
+  qrCodes            QRCode[]
+  fileConversions    FileConversion[]
+  metadata           DocumentMetadata[]
+  categories         DocumentCategory[]
+  tags               DocumentTag[]
+
+  @@index([organizationId])
+  @@index([officeId])
 }
 
 model DocumentPage {
@@ -238,7 +396,9 @@ model DocumentAccess {
   @@id([userId, documentId])
 }
 
+// ---------------------------------------------------------------------------
 // QR Codes
+// ---------------------------------------------------------------------------
 
 model QRCode {
   qrCodeId      Int       @id @default(autoincrement())
@@ -254,7 +414,9 @@ model QRCode {
   @@index([documentId])
 }
 
+// ---------------------------------------------------------------------------
 // File Conversions
+// ---------------------------------------------------------------------------
 
 model FileConversion {
   conversionId Int @id @default(autoincrement())
@@ -275,11 +437,13 @@ model FileConversion {
   @@index([documentId])
 }
 
-// Document Types
+// ---------------------------------------------------------------------------
+// Document Types (per organization)
+// ---------------------------------------------------------------------------
 
 model DocumentType {
   docTypeId       Int      @id @default(autoincrement())
-  docTypeName     String   @unique
+  docTypeName     String
   organizationId  Int
   description     String?
   createdAt       DateTime @default(now())
@@ -288,11 +452,16 @@ model DocumentType {
 
   documents      Document[]
   metadataFields MetadataField[]
+  scanSessions   ScanSession[]
 
   organization Organization @relation(fields:[organizationId], references:[organizationId])
+
+  @@unique([organizationId, docTypeName])
 }
 
+// ---------------------------------------------------------------------------
 // Metadata
+// ---------------------------------------------------------------------------
 
 model MetadataField {
   fieldId    Int     @id @default(autoincrement())
@@ -319,23 +488,27 @@ model DocumentMetadata {
   @@unique([documentId, fieldId])
 }
 
-// Categories 
+// ---------------------------------------------------------------------------
+// Categories (per organization)
+// ---------------------------------------------------------------------------
 
 model Category {
-  categoryId    Int       @id @default(autoincrement())
-  categoryName  String    @unique
+  categoryId     Int       @id @default(autoincrement())
+  categoryName   String
   organizationId Int
-  description   String?
-  createdBy     Int
-  lastUpdatedBy Int?
-  createdAt     DateTime  @default(now())
-  lastUpdatedAt DateTime?
+  description    String?
+  createdBy      Int
+  lastUpdatedBy  Int?
+  createdAt      DateTime  @default(now())
+  lastUpdatedAt  DateTime?
 
-  createdByUser User  @relation("CategoryCreatedBy", fields: [createdBy], references: [userId])
-  updatedByUser User? @relation("CategoryUpdatedBy", fields: [lastUpdatedBy], references: [userId])
+  createdByUser User         @relation("CategoryCreatedBy", fields: [createdBy], references: [userId])
+  updatedByUser User?        @relation("CategoryUpdatedBy", fields: [lastUpdatedBy], references: [userId])
   organization  Organization @relation(fields:[organizationId], references: [organizationId])
 
   documents DocumentCategory[]
+
+  @@unique([organizationId, categoryName])
 }
 
 model DocumentCategory {
@@ -348,23 +521,27 @@ model DocumentCategory {
   @@id([documentId, categoryId])
 }
 
-// Tags
+// ---------------------------------------------------------------------------
+// Tags (per organization)
+// ---------------------------------------------------------------------------
 
 model Tag {
-  tagId         Int       @id @default(autoincrement())
-  tagName       String    @unique
+  tagId          Int       @id @default(autoincrement())
+  tagName        String
   organizationId Int
-  description   String?
-  createdBy     Int
-  lastUpdatedBy Int?
-  createdAt     DateTime  @default(now())
-  lastUpdatedAt DateTime?
+  description    String?
+  createdBy      Int
+  lastUpdatedBy  Int?
+  createdAt      DateTime  @default(now())
+  lastUpdatedAt  DateTime?
 
-  organization Organization @relation(fields:[organizationId], references: [organizationId])
-  createdByUser User  @relation("TagCreatedBy", fields: [createdBy], references: [userId])
-  updatedByUser User? @relation("TagUpdatedBy", fields: [lastUpdatedBy], references: [userId])
+  organization  Organization @relation(fields:[organizationId], references: [organizationId])
+  createdByUser User         @relation("TagCreatedBy", fields: [createdBy], references: [userId])
+  updatedByUser User?        @relation("TagUpdatedBy", fields: [lastUpdatedBy], references: [userId])
 
   documents DocumentTag[]
+
+  @@unique([organizationId, tagName])
 }
 
 model DocumentTag {
@@ -377,19 +554,28 @@ model DocumentTag {
   @@id([documentId, tagId])
 }
 
-// Activuty Logs
+// ---------------------------------------------------------------------------
+// Activity Logs
+// ---------------------------------------------------------------------------
 
 model ActivityLog {
-  logId      Int      @id @default(autoincrement())
-  userId     Int?
-  documentId Int?
-  scannerId  Int?
-  action     String
-  result     String
-  details    String
-  timestamp  DateTime @default(now())
+  logId          Int      @id @default(autoincrement())
+  userId         Int?
+  organizationId Int?
+  officeId       Int?
+  documentId     Int?
+  scannerId      Int?
+  action         String
+  result         String
+  details        String?
+  timestamp      DateTime @default(now())
 
-  user     User?     @relation(fields: [userId], references: [userId])
-  document Document? @relation(fields: [documentId], references: [documentId])
-  scanner  Scanner?  @relation(fields: [scannerId], references: [scannerId])
+  user         User?         @relation(fields: [userId], references: [userId])
+  organization Organization? @relation(fields: [organizationId], references: [organizationId])
+  office       Office?       @relation(fields: [officeId], references: [officeId])
+  document     Document?     @relation(fields: [documentId], references: [documentId])
+  scanner      Scanner?      @relation(fields: [scannerId], references: [scannerId])
+
+  @@index([organizationId, timestamp])
+  @@index([officeId, timestamp])
 }
